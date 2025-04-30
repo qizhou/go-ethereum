@@ -710,3 +710,12 @@ func enable7702(jt *JumpTable) {
 	jt[STATICCALL].dynamicGas = gasStaticCallEIP7702
 	jt[DELEGATECALL].dynamicGas = gasDelegateCallEIP7702
 }
+
+// enable7903 the EIP-7903 changes to support large contracts.
+func enable7903(jt *JumpTable) {
+	jt[CALL].dynamicGas = gasCallEIP7903
+	jt[CALLCODE].dynamicGas = gasCallCodeEIP7903
+	jt[STATICCALL].dynamicGas = gasStaticCallEIP7903
+	jt[DELEGATECALL].dynamicGas = gasDelegateCallEIP7903
+	jt[EXTCODECOPY].dynamicGas = gasExtCodeCopyEIP7903
+}
