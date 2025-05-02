@@ -490,6 +490,10 @@ func (evm *EVM) create(caller common.Address, code []byte, gas uint64, value *ui
 		}
 		gas = gas - statelessGas
 	}
+	// The contract code is added to the access list _after_ the contract code is successfully deployed.
+	if evm.chainRules.IsEIP7907 {
+		evm.StateDB.AddAddressCodeToAccessList(address)
+	}
 	evm.Context.Transfer(evm.StateDB, caller, address, value)
 
 	// Initialise a new contract and set the code that is to be used by the EVM.

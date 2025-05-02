@@ -26,13 +26,20 @@ import (
 )
 
 type accessList struct {
-	addresses map[common.Address]int
-	slots     []map[common.Hash]struct{}
+	addresses    map[common.Address]int
+	slots        []map[common.Hash]struct{}
+	addressCodes map[common.Address]int
 }
 
 // ContainsAddress returns true if the address is in the access list.
 func (al *accessList) ContainsAddress(address common.Address) bool {
 	_, ok := al.addresses[address]
+	return ok
+}
+
+// ContainsAddress returns true if the address is in the access list.
+func (al *accessList) ContainsAddressCode(address common.Address) bool {
+	_, ok := al.addressCodes[address]
 	return ok
 }
 
@@ -77,6 +84,16 @@ func (al *accessList) AddAddress(address common.Address) bool {
 		return false
 	}
 	al.addresses[address] = -1
+	return true
+}
+
+// AddAddressCode adds an address code to the access list, and returns 'true' if the operation
+// caused a change (addr was not previously in the list).
+func (al *accessList) AddAddressCode(address common.Address) bool {
+	if _, present := al.addressCodes[address]; present {
+		return false
+	}
+	al.addressCodes[address] = -1
 	return true
 }
 
@@ -131,6 +148,14 @@ func (al *accessList) DeleteSlot(address common.Address, slot common.Hash) {
 // This method is meant to be used  by the journal, which maintains ordering of
 // operations.
 func (al *accessList) DeleteAddress(address common.Address) {
+	delete(al.addresses, address)
+}
+
+// DeleteAddress removes an address code from the access list. This operation
+// needs to be performed in the same order as the addition happened.
+// This method is meant to be used  by the journal, which maintains ordering of
+// operations.
+func (al *accessList) DeleteAddressCode(address common.Address) {
 	delete(al.addresses, address)
 }
 

@@ -121,12 +121,20 @@ func (s *hookedStateDB) AddressInAccessList(addr common.Address) bool {
 	return s.inner.AddressInAccessList(addr)
 }
 
+func (s *hookedStateDB) AddressCodeInAccessList(addr common.Address) bool {
+	return s.inner.AddressCodeInAccessList(addr)
+}
+
 func (s *hookedStateDB) SlotInAccessList(addr common.Address, slot common.Hash) (addressOk bool, slotOk bool) {
 	return s.inner.SlotInAccessList(addr, slot)
 }
 
 func (s *hookedStateDB) AddAddressToAccessList(addr common.Address) {
 	s.inner.AddAddressToAccessList(addr)
+}
+
+func (s *hookedStateDB) AddAddressCodeToAccessList(addr common.Address) {
+	s.inner.AddAddressCodeToAccessList(addr)
 }
 
 func (s *hookedStateDB) AddSlotToAccessList(addr common.Address, slot common.Hash) {

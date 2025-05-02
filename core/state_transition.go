@@ -301,6 +301,21 @@ func (st *stateTransition) buyGas() error {
 	return nil
 }
 
+// Check if an address is EOA (with delegation or not)
+func isEOA(state vm.StateDB, addr common.Address) bool {
+	// Check if the code size to avoid DoS attack if the code is large
+	codeSize := state.GetCodeSize(addr)
+	if codeSize == 0 {
+		return true
+	}
+	if codeSize != len(types.DelegationPrefix)+common.AddressLength {
+		return false
+	}
+	code := state.GetCode(addr)
+	_, delegation := types.ParseDelegation(code)
+	return delegation
+}
+
 func (st *stateTransition) preCheck() error {
 	// Only check transactions that are not fake
 	msg := st.msg
@@ -319,11 +334,8 @@ func (st *stateTransition) preCheck() error {
 		}
 	}
 	if !msg.SkipFromEOACheck {
-		// Make sure the sender is an EOA
-		code := st.state.GetCode(msg.From)
-		_, delegated := types.ParseDelegation(code)
-		if len(code) > 0 && !delegated {
-			return fmt.Errorf("%w: address %v, len(code): %d", ErrSenderNoEOA, msg.From.Hex(), len(code))
+		if isEOA(st.state, msg.From) {
+			return fmt.Errorf("%w: address %v, len(code): %d", ErrSenderNoEOA, msg.From.Hex(), st.state.GetCodeSize(msg.From))
 		}
 	}
 	// Make sure that transaction gasFeeCap is greater than the baseFee (post london)
@@ -501,8 +513,10 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 		// the account was deployed during this transaction. To handle correctly,
 		// simply wait until the final state of delegations is determined before
 		// performing the resolution and warming.
-		if addr, ok := types.ParseDelegation(st.state.GetCode(*msg.To)); ok {
-			st.state.AddAddressToAccessList(addr)
+		if isEOA(st.state, *msg.To) {
+			if addr, ok := types.ParseDelegation(st.state.GetCode(*msg.To)); ok {
+				st.state.AddAddressToAccessList(addr)
+			}
 		}
 
 		// Execute the transaction's call.
@@ -577,8 +591,7 @@ func (st *stateTransition) validateAuthorization(auth *types.SetCodeAuthorizatio
 	//
 	// Note it is added to the access list even if the authorization is invalid.
 	st.state.AddAddressToAccessList(authority)
-	code := st.state.GetCode(authority)
-	if _, ok := types.ParseDelegation(code); len(code) != 0 && !ok {
+	if !isEOA(st.state, authority) {
 		return authority, ErrAuthorizationDestinationHasCode
 	}
 	if have := st.state.GetNonce(authority); have != auth.Nonce {
