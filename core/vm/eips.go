@@ -711,11 +711,11 @@ func enable7702(jt *JumpTable) {
 	jt[DELEGATECALL].dynamicGas = gasDelegateCallEIP7702
 }
 
-// enable7903 the EIP-7903 changes to support large contracts.
-func enable7903(jt *JumpTable) {
-	jt[CALL].dynamicGas = gasCallEIP7903
-	jt[CALLCODE].dynamicGas = gasCallCodeEIP7903
-	jt[STATICCALL].dynamicGas = gasStaticCallEIP7903
-	jt[DELEGATECALL].dynamicGas = gasDelegateCallEIP7903
-	jt[EXTCODECOPY].dynamicGas = gasExtCodeCopyEIP7903
+// enable7907 the EIP-7907 changes to support large contracts.
+func enable7907(jt *JumpTable) {
+	jt[CALL].dynamicGas = gasCallEIP7907
+	jt[CALLCODE].dynamicGas = gasCallCodeEIP7907
+	jt[STATICCALL].dynamicGas = gasStaticCallEIP7907
+	jt[DELEGATECALL].dynamicGas = gasDelegateCallEIP7907
+	jt[EXTCODECOPY].dynamicGas = gasExtCodeCopyEIP7907
 }

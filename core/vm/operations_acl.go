@@ -312,10 +312,10 @@ func makeCallVariantGasCallEIP7702(oldCalculator gasFunc) gasFunc {
 }
 
 var (
-	gasCallEIP7903         = makeCallVariantGasCallEIP7903(gasCall)
-	gasDelegateCallEIP7903 = makeCallVariantGasCallEIP7903(gasDelegateCall)
-	gasStaticCallEIP7903   = makeCallVariantGasCallEIP7903(gasStaticCall)
-	gasCallCodeEIP7903     = makeCallVariantGasCallEIP7903(gasCallCode)
+	gasCallEIP7907         = makeCallVariantGasCallEIP7907(gasCall)
+	gasDelegateCallEIP7907 = makeCallVariantGasCallEIP7907(gasDelegateCall)
+	gasStaticCallEIP7907   = makeCallVariantGasCallEIP7907(gasStaticCall)
+	gasCallCodeEIP7907     = makeCallVariantGasCallEIP7907(gasCallCode)
 )
 
 func getColdCodeAccessGasCost(evm *EVM, addr common.Address) uint64 {
@@ -326,7 +326,7 @@ func getColdCodeAccessGasCost(evm *EVM, addr common.Address) uint64 {
 	return (uint64(codeSize) - params.MaxCodeSize) * 2 / 32
 }
 
-func makeCallVariantGasCallEIP7903(oldCalculator gasFunc) gasFunc {
+func makeCallVariantGasCallEIP7907(oldCalculator gasFunc) gasFunc {
 	return func(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
 		var (
 			total uint64 // total dynamic gas used
@@ -405,7 +405,7 @@ func makeCallVariantGasCallEIP7903(oldCalculator gasFunc) gasFunc {
 	}
 }
 
-func gasExtCodeCopyEIP7903(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
+func gasExtCodeCopyEIP7907(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
 	// memory expansion first (dynamic part of pre-2929 implementation)
 	gas, err := gasExtCodeCopy(evm, contract, stack, mem, memorySize)
 	if err != nil {
