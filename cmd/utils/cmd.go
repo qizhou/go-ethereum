@@ -238,6 +238,106 @@ func ImportChain(chain *core.BlockChain, fn string) error {
 	return nil
 }
 
+func ExecuteChain(chain *core.BlockChain, blocknum uint64) error {
+	// Watch for Ctrl-C while the import is running.
+	// If a signal is received, the import will stop at the next batch.
+	interrupt := make(chan os.Signal, 1)
+	stop := make(chan struct{})
+	signal.Notify(interrupt, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(interrupt)
+	defer close(interrupt)
+	go func() {
+		if _, ok := <-interrupt; ok {
+			log.Info("Interrupted during import, stopping at next batch")
+		}
+		close(stop)
+	}()
+	// checkInterrupt := func() bool {
+	// 	select {
+	// 	case <-stop:
+	// 		return true
+	// 	default:
+	// 		return false
+	// 	}
+	// }
+
+	log.Info("Executing blockchain", "blocknumber", blocknum)
+	block := chain.GetBlockByNumber(blocknum)
+	parentBlock := chain.GetBlockByHash(block.ParentHash())
+	if block == nil {
+		return fmt.Errorf("block not found %d", blocknum)
+	}
+
+	chain.SetHead(blocknum - 1)
+
+	result, err := chain.ProcessBlockWithBAL(parentBlock.Header().Root, block, false, false)
+	if err != nil {
+		return fmt.Errorf("invalid block: %v", err)
+	}
+
+	// stateDb, err := chain.StateAt(parentBlock.Root())
+	// if err != nil {
+	// 	stateDb, err = chain.HistoricState(parentBlock.Root())
+	// 	if err != nil {
+	// 		return fmt.Errorf("invalid block: %v", err)
+	// 	}
+	// }
+
+	fmt.Println(len(*result.AccessList))
+
+	// TODO: Read state info
+
+	// if processingResult.
+
+	// // Run actual the import.
+	// blocks := make(types.Blocks, importBatchSize)
+	// n := 0
+	// for batch := 0; ; batch++ {
+	// 	// Load a batch of RLP blocks.
+	// 	if checkInterrupt() {
+	// 		return ErrImportInterrupted
+	// 	}
+	// 	i := 0
+	// 	for ; i < importBatchSize; i++ {
+	// 		var b types.Block
+	// 		if err := stream.Decode(&b); err == io.EOF {
+	// 			break
+	// 		} else if err != nil {
+	// 			return fmt.Errorf("at block %d: %v", n, err)
+	// 		}
+	// 		// don't import first block
+	// 		if b.NumberU64() == 0 {
+	// 			i--
+	// 			continue
+	// 		}
+	// 		blocks[i] = &b
+	// 		n++
+	// 	}
+	// 	if i == 0 {
+	// 		break
+	// 	}
+	// 	// Import the batch.
+	// 	if checkInterrupt() {
+	// 		return errors.New("interrupted")
+	// 	}
+	// 	missing := missingBlocks(chain, blocks[:i])
+	// 	if len(missing) == 0 {
+	// 		log.Info("Skipping batch as all blocks present", "batch", batch, "first", blocks[0].Hash(), "last", blocks[i-1].Hash())
+	// 		continue
+	// 	}
+	// 	if failindex, err := chain.InsertChain(missing); err != nil {
+	// 		var failnumber uint64
+	// 		if failindex > 0 && failindex < len(missing) {
+	// 			failnumber = missing[failindex].NumberU64()
+	// 		} else {
+	// 			failnumber = missing[0].NumberU64()
+	// 		}
+	// 		return fmt.Errorf("invalid block %d: %v", failnumber, err)
+	// 	}
+	// }
+	return nil
+}
+
 func readList(filename string) ([]string, error) {
 	b, err := os.ReadFile(filename)
 	if err != nil {

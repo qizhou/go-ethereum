@@ -44,6 +44,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/eth/tracers/logger"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/syncx"
@@ -1971,14 +1972,230 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool, makeWitness 
 // blockProcessingResult is a summary of block processing
 // used for updating the stats.
 type blockProcessingResult struct {
-	usedGas  uint64
-	procTime time.Duration
-	status   WriteStatus
-	witness  *stateless.Witness
+	usedGas    uint64
+	procTime   time.Duration
+	status     WriteStatus
+	witness    *stateless.Witness
+	AccessList *types.AccessList
 }
 
 func (bpr *blockProcessingResult) Witness() *stateless.Witness {
 	return bpr.witness
+}
+
+// ProcessBlock executes and validates the given block. If there was no error
+// it writes the block and associated state to database.
+func (bc *BlockChain) ProcessBlockWithBAL(parentRoot common.Hash, block *types.Block, setHead bool, makeWitness bool) (_ *blockProcessingResult, blockEndErr error) {
+	var (
+		err       error
+		startTime = time.Now()
+		statedb   *state.StateDB
+		interrupt atomic.Bool
+	)
+	defer interrupt.Store(true) // terminate the prefetch at the end
+
+	if bc.cfg.NoPrefetch {
+		statedb, err = state.New(parentRoot, bc.statedb)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// If prefetching is enabled, run that against the current state to pre-cache
+		// transactions and probabilistically some of the account/storage trie nodes.
+		//
+		// Note: the main processor and prefetcher share the same reader with a local
+		// cache for mitigating the overhead of state access.
+		prefetch, process, err := bc.statedb.ReadersWithCacheStats(parentRoot)
+		if err != nil {
+			return nil, err
+		}
+		throwaway, err := state.NewWithReader(parentRoot, bc.statedb, prefetch)
+		if err != nil {
+			return nil, err
+		}
+		statedb, err = state.NewWithReader(parentRoot, bc.statedb, process)
+		if err != nil {
+			return nil, err
+		}
+		// Upload the statistics of reader at the end
+		defer func() {
+			stats := prefetch.GetStats()
+			accountCacheHitPrefetchMeter.Mark(stats.AccountHit)
+			accountCacheMissPrefetchMeter.Mark(stats.AccountMiss)
+			storageCacheHitPrefetchMeter.Mark(stats.StorageHit)
+			storageCacheMissPrefetchMeter.Mark(stats.StorageMiss)
+			stats = process.GetStats()
+			accountCacheHitMeter.Mark(stats.AccountHit)
+			accountCacheMissMeter.Mark(stats.AccountMiss)
+			storageCacheHitMeter.Mark(stats.StorageHit)
+			storageCacheMissMeter.Mark(stats.StorageMiss)
+		}()
+
+		go func(start time.Time, throwaway *state.StateDB, block *types.Block) {
+			// Disable tracing for prefetcher executions.
+			vmCfg := bc.cfg.VmConfig
+			vmCfg.Tracer = nil
+			bc.prefetcher.Prefetch(block, throwaway, vmCfg, &interrupt)
+
+			blockPrefetchExecuteTimer.Update(time.Since(start))
+			if interrupt.Load() {
+				blockPrefetchInterruptMeter.Mark(1)
+			}
+		}(time.Now(), throwaway, block)
+	}
+
+	// If we are past Byzantium, enable prefetching to pull in trie node paths
+	// while processing transactions. Before Byzantium the prefetcher is mostly
+	// useless due to the intermediate root hashing after each transaction.
+	var (
+		witness      *stateless.Witness
+		witnessStats *stateless.WitnessStats
+	)
+	if bc.chainConfig.IsByzantium(block.Number()) {
+		// Generate witnesses either if we're self-testing, or if it's the
+		// only block being inserted. A bit crude, but witnesses are huge,
+		// so we refuse to make an entire chain of them.
+		if bc.cfg.VmConfig.StatelessSelfValidation || makeWitness {
+			witness, err = stateless.NewWitness(block.Header(), bc)
+			if err != nil {
+				return nil, err
+			}
+			if bc.cfg.VmConfig.EnableWitnessStats {
+				witnessStats = stateless.NewWitnessStats()
+			}
+		}
+		statedb.StartPrefetcher("chain", witness, witnessStats)
+		defer statedb.StopPrefetcher()
+	}
+
+	var accessList types.AccessList
+	tracer := logger.NewAccessListTracer(accessList, nil)
+
+	if bc.logger != nil && bc.logger.OnBlockStart != nil {
+		bc.logger.OnBlockStart(tracing.BlockEvent{
+			Block:     block,
+			Finalized: bc.CurrentFinalBlock(),
+			Safe:      bc.CurrentSafeBlock(),
+		})
+	}
+	if bc.logger != nil && bc.logger.OnBlockEnd != nil {
+		defer func() {
+			bc.logger.OnBlockEnd(blockEndErr)
+		}()
+	}
+	if bc.logger != nil {
+		if bc.logger.OnOpcode != nil {
+			log.Warn("Overriding opcode tracer")
+		}
+		bc.cfg.VmConfig.Tracer.OnOpcode = tracer.OnOpcode
+	}
+
+	// Process block using the parent state as reference point
+	pstart := time.Now()
+	res, err := bc.processor.Process(block, statedb, bc.cfg.VmConfig)
+	if err != nil {
+		bc.reportBlock(block, res, err)
+		return nil, err
+	}
+	ptime := time.Since(pstart)
+
+	vstart := time.Now()
+	if err := bc.validator.ValidateState(block, statedb, res, false); err != nil {
+		bc.reportBlock(block, res, err)
+		return nil, err
+	}
+	vtime := time.Since(vstart)
+
+	// If witnesses was generated and stateless self-validation requested, do
+	// that now. Self validation should *never* run in production, it's more of
+	// a tight integration to enable running *all* consensus tests through the
+	// witness builder/runner, which would otherwise be impossible due to the
+	// various invalid chain states/behaviors being contained in those tests.
+	xvstart := time.Now()
+	if witness := statedb.Witness(); witness != nil && bc.cfg.VmConfig.StatelessSelfValidation {
+		log.Warn("Running stateless self-validation", "block", block.Number(), "hash", block.Hash())
+
+		// Remove critical computed fields from the block to force true recalculation
+		context := block.Header()
+		context.Root = common.Hash{}
+		context.ReceiptHash = common.Hash{}
+
+		task := types.NewBlockWithHeader(context).WithBody(*block.Body())
+
+		// Run the stateless self-cross-validation
+		crossStateRoot, crossReceiptRoot, err := ExecuteStateless(bc.chainConfig, bc.cfg.VmConfig, task, witness)
+		if err != nil {
+			return nil, fmt.Errorf("stateless self-validation failed: %v", err)
+		}
+		if crossStateRoot != block.Root() {
+			return nil, fmt.Errorf("stateless self-validation root mismatch (cross: %x local: %x)", crossStateRoot, block.Root())
+		}
+		if crossReceiptRoot != block.ReceiptHash() {
+			return nil, fmt.Errorf("stateless self-validation receipt root mismatch (cross: %x local: %x)", crossReceiptRoot, block.ReceiptHash())
+		}
+	}
+
+	xvtime := time.Since(xvstart)
+	proctime := time.Since(startTime) // processing + validation + cross validation
+
+	// Update the metrics touched during block processing and validation
+	accountReadTimer.Update(statedb.AccountReads) // Account reads are complete(in processing)
+	storageReadTimer.Update(statedb.StorageReads) // Storage reads are complete(in processing)
+	if statedb.AccountLoaded != 0 {
+		accountReadSingleTimer.Update(statedb.AccountReads / time.Duration(statedb.AccountLoaded))
+	}
+	if statedb.StorageLoaded != 0 {
+		storageReadSingleTimer.Update(statedb.StorageReads / time.Duration(statedb.StorageLoaded))
+	}
+	accountUpdateTimer.Update(statedb.AccountUpdates)                                 // Account updates are complete(in validation)
+	storageUpdateTimer.Update(statedb.StorageUpdates)                                 // Storage updates are complete(in validation)
+	accountHashTimer.Update(statedb.AccountHashes)                                    // Account hashes are complete(in validation)
+	triehash := statedb.AccountHashes                                                 // The time spent on tries hashing
+	trieUpdate := statedb.AccountUpdates + statedb.StorageUpdates                     // The time spent on tries update
+	blockExecutionTimer.Update(ptime - (statedb.AccountReads + statedb.StorageReads)) // The time spent on EVM processing
+	blockValidationTimer.Update(vtime - (triehash + trieUpdate))                      // The time spent on block validation
+	blockCrossValidationTimer.Update(xvtime)                                          // The time spent on stateless cross validation
+
+	// Write the block to the chain and get the status.
+	var (
+		wstart = time.Now()
+		status WriteStatus
+	)
+	if !setHead {
+		// Don't set the head, only insert the block
+		err = bc.writeBlockWithState(block, res.Receipts, statedb)
+	} else {
+		status, err = bc.writeBlockAndSetHead(block, res.Receipts, res.Logs, statedb, false)
+	}
+	if err != nil {
+		return nil, err
+	}
+	// Report the collected witness statistics
+	if witnessStats != nil {
+		witnessStats.ReportMetrics(block.NumberU64())
+	}
+
+	// Update the metrics touched during block commit
+	accountCommitTimer.Update(statedb.AccountCommits)   // Account commits are complete, we can mark them
+	storageCommitTimer.Update(statedb.StorageCommits)   // Storage commits are complete, we can mark them
+	snapshotCommitTimer.Update(statedb.SnapshotCommits) // Snapshot commits are complete, we can mark them
+	triedbCommitTimer.Update(statedb.TrieDBCommits)     // Trie database commits are complete, we can mark them
+
+	blockWriteTimer.Update(time.Since(wstart) - max(statedb.AccountCommits, statedb.StorageCommits) /* concurrent */ - statedb.SnapshotCommits - statedb.TrieDBCommits)
+	elapsed := time.Since(startTime) + 1 // prevent zero division
+	blockInsertTimer.Update(elapsed)
+
+	// TODO(rjl493456442) generalize the ResettingTimer
+	mgasps := float64(res.GasUsed) * 1000 / float64(elapsed)
+	chainMgaspsMeter.Update(time.Duration(mgasps))
+
+	return &blockProcessingResult{
+		usedGas:    res.GasUsed,
+		procTime:   proctime,
+		status:     status,
+		witness:    witness,
+		AccessList: &accessList,
+	}, nil
 }
 
 // ProcessBlock executes and validates the given block. If there was no error

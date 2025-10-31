@@ -217,6 +217,7 @@ func init() {
 	app.Commands = []*cli.Command{
 		// See chaincmd.go:
 		initCommand,
+		executeCommand,
 		importCommand,
 		exportCommand,
 		importHistoryCommand,

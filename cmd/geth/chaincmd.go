@@ -132,6 +132,52 @@ If only one file is used, an import error will result in the entire import proce
 multiple files are processed, the import process will continue even if an individual RLP file fails
 to import successfully.`,
 	}
+	executeCommand = &cli.Command{
+		Action:    executeChain,
+		Name:      "execute",
+		Usage:     "Execute an existing block",
+		ArgsUsage: "<blocknum>",
+		Flags: slices.Concat([]cli.Flag{
+			utils.GCModeFlag,
+			utils.SnapshotFlag,
+			utils.CacheFlag,
+			utils.CacheDatabaseFlag,
+			utils.CacheTrieFlag,
+			utils.CacheGCFlag,
+			utils.CacheSnapshotFlag,
+			utils.CacheNoPrefetchFlag,
+			utils.CachePreimagesFlag,
+			utils.NoCompactionFlag,
+			utils.MetricsEnabledFlag,
+			utils.MetricsEnabledExpensiveFlag,
+			utils.MetricsHTTPFlag,
+			utils.MetricsPortFlag,
+			utils.MetricsEnableInfluxDBFlag,
+			utils.MetricsEnableInfluxDBV2Flag,
+			utils.MetricsInfluxDBEndpointFlag,
+			utils.MetricsInfluxDBDatabaseFlag,
+			utils.MetricsInfluxDBUsernameFlag,
+			utils.MetricsInfluxDBPasswordFlag,
+			utils.MetricsInfluxDBTagsFlag,
+			utils.MetricsInfluxDBTokenFlag,
+			utils.MetricsInfluxDBBucketFlag,
+			utils.MetricsInfluxDBOrganizationFlag,
+			utils.StateSizeTrackingFlag,
+			utils.TxLookupLimitFlag,
+			utils.VMTraceFlag,
+			utils.VMTraceJsonConfigFlag,
+			utils.TransactionHistoryFlag,
+			utils.LogHistoryFlag,
+			utils.LogNoHistoryFlag,
+			utils.LogExportCheckpointsFlag,
+			utils.StateHistoryFlag,
+		}, utils.DatabaseFlags, debug.Flags),
+		Before: func(ctx *cli.Context) error {
+			flags.MigrateGlobalFlags(ctx)
+			return debug.Setup(ctx)
+		},
+		Description: `Re-execute a block and obtain BAL information.`,
+	}
 	exportCommand = &cli.Command{
 		Action:    exportChain,
 		Name:      "export",
@@ -421,6 +467,66 @@ func importChain(ctx *cli.Context) error {
 	fmt.Printf("Compaction done in %v.\n\n", time.Since(start))
 
 	showDBStats(db)
+	return importErr
+}
+
+func executeChain(ctx *cli.Context) error {
+	if ctx.Args().Len() < 1 {
+		utils.Fatalf("This command requires an argument.")
+	}
+	stack, cfg := makeConfigNode(ctx)
+	defer stack.Close()
+
+	// Start metrics export if enabled
+	utils.SetupMetrics(&cfg.Metrics)
+
+	chain, db := utils.MakeChain(ctx, stack, false)
+	defer db.Close()
+
+	// Start periodically gathering memory profiles
+	var peakMemAlloc, peakMemSys atomic.Uint64
+	go func() {
+		stats := new(runtime.MemStats)
+		for {
+			runtime.ReadMemStats(stats)
+			if peakMemAlloc.Load() < stats.Alloc {
+				peakMemAlloc.Store(stats.Alloc)
+			}
+			if peakMemSys.Load() < stats.Sys {
+				peakMemSys.Store(stats.Sys)
+			}
+			time.Sleep(5 * time.Second)
+		}
+	}()
+	// Import the chain
+	start := time.Now()
+
+	var importErr error
+
+	blocknum, err := strconv.ParseUint(ctx.Args().First(), 10, 64)
+	if err != nil {
+		importErr = err
+		log.Error("Import error", "err", err)
+	} else if err := utils.ExecuteChain(chain, blocknum); err != nil {
+		importErr = err
+		log.Error("Import error", "err", err)
+	}
+
+	chain.Stop()
+	fmt.Printf("Import done in %v.\n\n", time.Since(start))
+
+	// Output pre-compaction stats mostly to see the import trashing
+	showDBStats(db)
+
+	// Print the memory statistics used by the importing
+	mem := new(runtime.MemStats)
+	runtime.ReadMemStats(mem)
+
+	fmt.Printf("Object memory: %.3f MB current, %.3f MB peak\n", float64(mem.Alloc)/1024/1024, float64(peakMemAlloc.Load())/1024/1024)
+	fmt.Printf("System memory: %.3f MB current, %.3f MB peak\n", float64(mem.Sys)/1024/1024, float64(peakMemSys.Load())/1024/1024)
+	fmt.Printf("Allocations:   %.3f million\n", float64(mem.Mallocs)/1000000)
+	fmt.Printf("GC pause:      %v\n\n", time.Duration(mem.PauseTotalNs))
+
 	return importErr
 }
 
