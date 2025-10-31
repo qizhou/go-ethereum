@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
@@ -50,6 +51,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/triedb"
+	"github.com/holiman/uint256"
 	"github.com/urfave/cli/v2"
 )
 
@@ -271,7 +273,8 @@ func ExecuteChain(chain *core.BlockChain, blocknum uint64) error {
 		return fmt.Errorf("failed to get state")
 	}
 
-	var balList types.BalList
+	var bal types.BAL
+	var balList []types.BalTuple
 	for _, acc := range *result.AccessList {
 		var bal types.BalTuple
 		bal.Address = acc.Address
@@ -297,12 +300,40 @@ func ExecuteChain(chain *core.BlockChain, blocknum uint64) error {
 		balList = append(balList, bal)
 	}
 
-	json, err := json.MarshalIndent(balList, "", "    ")
+	var postTxUpdateList [][]types.TxUpdateTuple
+	for _, txUpdate := range result.PostTxUpdates {
+		var postTxUpdate []types.TxUpdateTuple
+
+		for addr, accUpdate := range txUpdate {
+			var update types.TxUpdateTuple
+			update.Address = addr
+			update.NewBalance = accUpdate.NewBalance
+			update.NewCode = (*hexutil.Bytes)(accUpdate.NewCode)
+			if update.NewNonce != nil {
+				update.NewNonce = uint256.NewInt(*accUpdate.NewNonce)
+			}
+			for key, value := range accUpdate.StorageKeyValue {
+				var kv types.KeyValue
+				kv.Key = key
+				kv.Value = value
+				update.StorageKeyValues = append(update.StorageKeyValues, kv)
+			}
+
+			postTxUpdate = append(postTxUpdate, update)
+		}
+
+		postTxUpdateList = append(postTxUpdateList, postTxUpdate)
+	}
+
+	bal.AccessList = balList
+	bal.PostTxUpdates = postTxUpdateList
+
+	json, err := json.MarshalIndent(bal, "", "    ")
 	if err != nil {
 		log.Error("Error dumping state", "err", err)
 	}
 
-	fmt.Println(string(json))
+	os.WriteFile("bal.json", json, 0666)
 
 	return nil
 }

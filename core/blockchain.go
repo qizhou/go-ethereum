@@ -1972,11 +1972,12 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool, makeWitness 
 // blockProcessingResult is a summary of block processing
 // used for updating the stats.
 type blockProcessingResult struct {
-	usedGas    uint64
-	procTime   time.Duration
-	status     WriteStatus
-	witness    *stateless.Witness
-	AccessList *types.AccessList
+	usedGas       uint64
+	procTime      time.Duration
+	status        WriteStatus
+	witness       *stateless.Witness
+	AccessList    *types.AccessList
+	PostTxUpdates []logger.TxUpdateList
 }
 
 func (bpr *blockProcessingResult) Witness() *stateless.Witness {
@@ -2068,7 +2069,7 @@ func (bc *BlockChain) ProcessBlockWithBAL(parentRoot common.Hash, block *types.B
 		defer statedb.StopPrefetcher()
 	}
 
-	tracer := logger.NewAccessListTracer(nil, nil)
+	tracer := logger.NewBalTracer(nil, nil)
 
 	if bc.logger != nil && bc.logger.OnBlockStart != nil {
 		bc.logger.OnBlockStart(tracing.BlockEvent{
@@ -2186,11 +2187,12 @@ func (bc *BlockChain) ProcessBlockWithBAL(parentRoot common.Hash, block *types.B
 
 	accessList := tracer.AccessList()
 	return &blockProcessingResult{
-		usedGas:    res.GasUsed,
-		procTime:   proctime,
-		status:     status,
-		witness:    witness,
-		AccessList: &accessList,
+		usedGas:       res.GasUsed,
+		procTime:      proctime,
+		status:        status,
+		witness:       witness,
+		AccessList:    &accessList,
+		PostTxUpdates: tracer.PostTxUpdates,
 	}, nil
 }
 
