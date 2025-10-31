@@ -509,16 +509,27 @@ func executeChain(ctx *cli.Context) error {
 	noPostTxUpdates := ctx.Bool(utils.BalNoPostTxUpdatesFlag.Name)
 
 	blocknum, err := strconv.ParseUint(ctx.Args().First(), 10, 64)
+	var blocks = uint64(1)
 	if err != nil {
 		importErr = err
 		log.Error("Import error", "err", err)
-	} else if err := utils.ExecuteChain(chain, blocknum, noCode, noPostTxUpdates); err != nil {
-		importErr = err
-		log.Error("Import error", "err", err)
+	} else if ctx.Args().Len() >= 2 {
+		blocks, err = strconv.ParseUint(ctx.Args().Get(1), 10, 64)
+		if err != nil {
+			importErr = err
+			log.Error("Import error", "err", err)
+		}
+	}
+
+	if err == nil {
+		if err = utils.ExecuteChain(chain, blocknum, blocks, noCode, noPostTxUpdates); err != nil {
+			importErr = err
+			log.Error("Import error", "err", err)
+		}
 	}
 
 	chain.Stop()
-	fmt.Printf("Import done in %v.\n\n", time.Since(start))
+	fmt.Printf("Execution done in %v.\n\n", time.Since(start))
 
 	// Output pre-compaction stats mostly to see the import trashing
 	showDBStats(db)

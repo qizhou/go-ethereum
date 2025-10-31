@@ -241,7 +241,7 @@ func ImportChain(chain *core.BlockChain, fn string) error {
 	return nil
 }
 
-func ExecuteChain(chain *core.BlockChain, blocknum uint64, noCode, noPostTxUpdates bool) error {
+func ExecuteChain(chain *core.BlockChain, blocknum uint64, blocks uint64, noCode, noPostTxUpdates bool) error {
 	// Watch for Ctrl-C while the import is running.
 	// If a signal is received, the import will stop at the next batch.
 	interrupt := make(chan os.Signal, 1)
@@ -256,6 +256,17 @@ func ExecuteChain(chain *core.BlockChain, blocknum uint64, noCode, noPostTxUpdat
 		close(stop)
 	}()
 
+	for i := uint64(0); i < blocks; i++ {
+		err := executeOneBlock(blocknum+i, chain, noCode, noPostTxUpdates)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func executeOneBlock(blocknum uint64, chain *core.BlockChain, noCode bool, noPostTxUpdates bool) error {
 	log.Info("Executing blockchain", "blocknumber", blocknum)
 	block := chain.GetBlockByNumber(blocknum)
 	parentBlock := chain.GetBlockByHash(block.ParentHash())
@@ -337,8 +348,7 @@ func ExecuteChain(chain *core.BlockChain, blocknum uint64, noCode, noPostTxUpdat
 		log.Error("Error dumping state", "err", err)
 	}
 
-	os.WriteFile("bal.json", json, 0666)
-
+	os.WriteFile(fmt.Sprintf("bal-%d.json", blocknum), json, 0666)
 	return nil
 }
 
