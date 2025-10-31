@@ -274,6 +274,18 @@ var (
 		Value:    "full",
 		Category: flags.StateCategory,
 	}
+	BalNoCodeFlag = &cli.BoolFlag{
+		Name:     "bal.nocode",
+		Usage:    "BAL generation without code",
+		Value:    false,
+		Category: flags.BalCateory,
+	}
+	BalNoPostTxUpdatesFlag = &cli.BoolFlag{
+		Name:     "bal.noposttxupdate",
+		Usage:    "BAL generation without post tx updates",
+		Value:    false,
+		Category: flags.BalCateory,
+	}
 	StateSchemeFlag = &cli.StringFlag{
 		Name:     "state.scheme",
 		Usage:    "Scheme to use for storing ethereum state ('hash' or 'path')",

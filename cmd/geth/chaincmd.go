@@ -138,6 +138,8 @@ to import successfully.`,
 		Usage:     "Execute an existing block",
 		ArgsUsage: "<blocknum>",
 		Flags: slices.Concat([]cli.Flag{
+			utils.BalNoCodeFlag,
+			utils.BalNoPostTxUpdatesFlag,
 			utils.GCModeFlag,
 			utils.SnapshotFlag,
 			utils.CacheFlag,
@@ -503,11 +505,14 @@ func executeChain(ctx *cli.Context) error {
 
 	var importErr error
 
+	noCode := ctx.Bool(utils.BalNoCodeFlag.Name)
+	noPostTxUpdates := ctx.Bool(utils.BalNoPostTxUpdatesFlag.Name)
+
 	blocknum, err := strconv.ParseUint(ctx.Args().First(), 10, 64)
 	if err != nil {
 		importErr = err
 		log.Error("Import error", "err", err)
-	} else if err := utils.ExecuteChain(chain, blocknum); err != nil {
+	} else if err := utils.ExecuteChain(chain, blocknum, noCode, noPostTxUpdates); err != nil {
 		importErr = err
 		log.Error("Import error", "err", err)
 	}

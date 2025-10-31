@@ -241,7 +241,7 @@ func ImportChain(chain *core.BlockChain, fn string) error {
 	return nil
 }
 
-func ExecuteChain(chain *core.BlockChain, blocknum uint64) error {
+func ExecuteChain(chain *core.BlockChain, blocknum uint64, noCode, noPostTxUpdates bool) error {
 	// Watch for Ctrl-C while the import is running.
 	// If a signal is received, the import will stop at the next batch.
 	interrupt := make(chan os.Signal, 1)
@@ -288,7 +288,9 @@ func ExecuteChain(chain *core.BlockChain, blocknum uint64) error {
 			return fmt.Errorf("invalid account rlp: %v", err)
 		}
 
-		bal.Code = state.GetCode(acc.Address)
+		if !noCode {
+			bal.Code = state.GetCode(acc.Address)
+		}
 
 		for _, key := range acc.StorageKeys {
 			var kv types.KeyValue
@@ -301,28 +303,30 @@ func ExecuteChain(chain *core.BlockChain, blocknum uint64) error {
 	}
 
 	var postTxUpdateList [][]types.TxUpdateTuple
-	for _, txUpdate := range result.PostTxUpdates {
-		var postTxUpdate []types.TxUpdateTuple
+	if !noPostTxUpdates {
+		for _, txUpdate := range result.PostTxUpdates {
+			var postTxUpdate []types.TxUpdateTuple
 
-		for addr, accUpdate := range txUpdate {
-			var update types.TxUpdateTuple
-			update.Address = addr
-			update.NewBalance = accUpdate.NewBalance
-			update.NewCode = (*hexutil.Bytes)(accUpdate.NewCode)
-			if update.NewNonce != nil {
-				update.NewNonce = uint256.NewInt(*accUpdate.NewNonce)
-			}
-			for key, value := range accUpdate.StorageKeyValue {
-				var kv types.KeyValue
-				kv.Key = key
-				kv.Value = value
-				update.StorageKeyValues = append(update.StorageKeyValues, kv)
+			for addr, accUpdate := range txUpdate {
+				var update types.TxUpdateTuple
+				update.Address = addr
+				update.NewBalance = accUpdate.NewBalance
+				update.NewCode = (*hexutil.Bytes)(accUpdate.NewCode)
+				if update.NewNonce != nil {
+					update.NewNonce = uint256.NewInt(*accUpdate.NewNonce)
+				}
+				for key, value := range accUpdate.StorageKeyValue {
+					var kv types.KeyValue
+					kv.Key = key
+					kv.Value = value
+					update.StorageKeyValues = append(update.StorageKeyValues, kv)
+				}
+
+				postTxUpdate = append(postTxUpdate, update)
 			}
 
-			postTxUpdate = append(postTxUpdate, update)
+			postTxUpdateList = append(postTxUpdateList, postTxUpdate)
 		}
-
-		postTxUpdateList = append(postTxUpdateList, postTxUpdate)
 	}
 
 	bal.AccessList = balList
