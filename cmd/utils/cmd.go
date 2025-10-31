@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -252,14 +253,6 @@ func ExecuteChain(chain *core.BlockChain, blocknum uint64) error {
 		}
 		close(stop)
 	}()
-	// checkInterrupt := func() bool {
-	// 	select {
-	// 	case <-stop:
-	// 		return true
-	// 	default:
-	// 		return false
-	// 	}
-	// }
 
 	log.Info("Executing blockchain", "blocknumber", blocknum)
 	block := chain.GetBlockByNumber(blocknum)
@@ -268,73 +261,49 @@ func ExecuteChain(chain *core.BlockChain, blocknum uint64) error {
 		return fmt.Errorf("block not found %d", blocknum)
 	}
 
-	chain.SetHead(blocknum - 1)
-
 	result, err := chain.ProcessBlockWithBAL(parentBlock.Header().Root, block, false, false)
 	if err != nil {
 		return fmt.Errorf("invalid block: %v", err)
 	}
 
-	// stateDb, err := chain.StateAt(parentBlock.Root())
-	// if err != nil {
-	// 	stateDb, err = chain.HistoricState(parentBlock.Root())
-	// 	if err != nil {
-	// 		return fmt.Errorf("invalid block: %v", err)
-	// 	}
-	// }
+	state, err := chain.StateAt(parentBlock.Header().Root)
+	if err != nil {
+		return fmt.Errorf("failed to get state")
+	}
 
-	fmt.Println(len(*result.AccessList))
+	var balList types.BalList
+	for _, acc := range *result.AccessList {
+		var bal types.BalTuple
+		bal.Address = acc.Address
 
-	// TODO: Read state info
+		accValue, err := state.Reader().Account(acc.Address)
+		if err != nil {
+			return fmt.Errorf("invalid account: %v", err)
+		}
+		bal.Account, err = rlp.EncodeToBytes(accValue)
+		if err != nil {
+			return fmt.Errorf("invalid account rlp: %v", err)
+		}
 
-	// if processingResult.
+		bal.Code = state.GetCode(acc.Address)
 
-	// // Run actual the import.
-	// blocks := make(types.Blocks, importBatchSize)
-	// n := 0
-	// for batch := 0; ; batch++ {
-	// 	// Load a batch of RLP blocks.
-	// 	if checkInterrupt() {
-	// 		return ErrImportInterrupted
-	// 	}
-	// 	i := 0
-	// 	for ; i < importBatchSize; i++ {
-	// 		var b types.Block
-	// 		if err := stream.Decode(&b); err == io.EOF {
-	// 			break
-	// 		} else if err != nil {
-	// 			return fmt.Errorf("at block %d: %v", n, err)
-	// 		}
-	// 		// don't import first block
-	// 		if b.NumberU64() == 0 {
-	// 			i--
-	// 			continue
-	// 		}
-	// 		blocks[i] = &b
-	// 		n++
-	// 	}
-	// 	if i == 0 {
-	// 		break
-	// 	}
-	// 	// Import the batch.
-	// 	if checkInterrupt() {
-	// 		return errors.New("interrupted")
-	// 	}
-	// 	missing := missingBlocks(chain, blocks[:i])
-	// 	if len(missing) == 0 {
-	// 		log.Info("Skipping batch as all blocks present", "batch", batch, "first", blocks[0].Hash(), "last", blocks[i-1].Hash())
-	// 		continue
-	// 	}
-	// 	if failindex, err := chain.InsertChain(missing); err != nil {
-	// 		var failnumber uint64
-	// 		if failindex > 0 && failindex < len(missing) {
-	// 			failnumber = missing[failindex].NumberU64()
-	// 		} else {
-	// 			failnumber = missing[0].NumberU64()
-	// 		}
-	// 		return fmt.Errorf("invalid block %d: %v", failnumber, err)
-	// 	}
-	// }
+		for _, key := range acc.StorageKeys {
+			var kv types.KeyValue
+			kv.Key = key
+			kv.Value = state.GetState(acc.Address, key)
+			bal.StorageKeyValues = append(bal.StorageKeyValues, kv)
+		}
+
+		balList = append(balList, bal)
+	}
+
+	json, err := json.MarshalIndent(balList, "", "    ")
+	if err != nil {
+		log.Error("Error dumping state", "err", err)
+	}
+
+	fmt.Println(string(json))
+
 	return nil
 }
 

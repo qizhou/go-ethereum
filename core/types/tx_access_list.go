@@ -21,6 +21,7 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -42,6 +43,22 @@ func (al AccessList) StorageKeys() int {
 		sum += len(tuple.StorageKeys)
 	}
 	return sum
+}
+
+// AccessList is an EIP-2930 access list.
+type BalList []BalTuple
+
+type KeyValue struct {
+	Key   common.Hash `json:"key"`
+	Value common.Hash `json:"value"`
+}
+
+// AccessTuple is the element type of an access list.
+type BalTuple struct {
+	Address          common.Address `json:"address"     gencodec:"required"`
+	Account          hexutil.Bytes  `json:"account"     gencodec:"required"`
+	Code             hexutil.Bytes  `json:"code"     gencodec:"required"`
+	StorageKeyValues []KeyValue     `json:"storageKeyValues" gencodec:"required"`
 }
 
 // AccessListTx is the data of EIP-2930 access list transactions.

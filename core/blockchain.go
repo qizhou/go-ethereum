@@ -2068,8 +2068,7 @@ func (bc *BlockChain) ProcessBlockWithBAL(parentRoot common.Hash, block *types.B
 		defer statedb.StopPrefetcher()
 	}
 
-	var accessList types.AccessList
-	tracer := logger.NewAccessListTracer(accessList, nil)
+	tracer := logger.NewAccessListTracer(nil, nil)
 
 	if bc.logger != nil && bc.logger.OnBlockStart != nil {
 		bc.logger.OnBlockStart(tracing.BlockEvent{
@@ -2083,12 +2082,8 @@ func (bc *BlockChain) ProcessBlockWithBAL(parentRoot common.Hash, block *types.B
 			bc.logger.OnBlockEnd(blockEndErr)
 		}()
 	}
-	if bc.logger != nil {
-		if bc.logger.OnOpcode != nil {
-			log.Warn("Overriding opcode tracer")
-		}
-		bc.cfg.VmConfig.Tracer.OnOpcode = tracer.OnOpcode
-	}
+	// this overrides bc.logger (if bc.logger != nil)
+	bc.cfg.VmConfig.Tracer = tracer.Hooks()
 
 	// Process block using the parent state as reference point
 	pstart := time.Now()
@@ -2189,6 +2184,7 @@ func (bc *BlockChain) ProcessBlockWithBAL(parentRoot common.Hash, block *types.B
 	mgasps := float64(res.GasUsed) * 1000 / float64(elapsed)
 	chainMgaspsMeter.Update(time.Duration(mgasps))
 
+	accessList := tracer.AccessList()
 	return &blockProcessingResult{
 		usedGas:    res.GasUsed,
 		procTime:   proctime,
